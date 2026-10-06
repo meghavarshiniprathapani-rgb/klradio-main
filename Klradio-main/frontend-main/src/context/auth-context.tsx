@@ -1,0 +1,171 @@
+'use client';
+
+import { createContext, useContext, useState, ReactNode, useCallback, useEffect, useMemo, useRef } from 'react';
+import { useRouter, usePathname } from 'next/navigation';
+import type { SongSuggestion, User, UserRole } from '@/lib/types';
+import api, { setAuthToken } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
+
+const roleRedirects: { [key in UserRole]?: string } = {
+  'station_head': '/dashboard',
+  'rj': '/dashboard/rj-wing',
+  'creative': '/dashboard/creative',
+  'technical': '/dashboard/technical',
+  'pr': '/dashboard/pr',
+  'designing': '/dashboard/designing',
+  'video_editing': '/dashboard/video-editing',
+  'broadcasting': '/dashboard/broadcasting',
+};
+
+type AuthContextType = {
+  user: User | null;
+  loading: boolean;
+  login: (role: string, username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  logout: () => void;
+  addSongSuggestion: (suggestion: Omit<SongSuggestion, 'id' | 'submittedAt' | 'status'>) => Promise<{ success: boolean }>;
+};
+
+const AuthContext = createContext<AuthContextType | undefined>(undefined);
+
+export function AuthProvider({ children }: { children: ReactNode }) {
+  const [user, setUser] = useState<User | null>(null);
+  const [loading, setLoading] = useState(true);
+  const router = useRouter();
+  const pathname = usePathname();
+  const { toast } = useToast();
+  const justLoggedInRef = useRef(false);
+  
+  const verifyAuth = useCallback(async () => {
+    if (justLoggedInRef.current) {
+      justLoggedInRef.current = false;
+      setLoading(false);
+      return;
+    }
+
+    const token = localStorage.getItem('token');
+    const isAuthPage = pathname === '/login';
+    const publicPages = ['/', '/events', '/our-team', '/timeline', '/our-roots', '/terms'];
+    const isPublicPage = publicPages.some(page => (page === '/' && pathname === '/') || (page !== '/' && pathname.startsWith(page)));
+
+    if (!token) {
+        if (!isPublicPage && !isAuthPage) {
+            router.replace('/login');
+        }
+        setLoading(false);
+        return;
+    }
+
+    setAuthToken(token);
+    try {
+        const response = await api.get('/auth/me');
+        if (response.data && response.data.user) {
+            const userData = response.data.user;
+            const apiUser: User = {
+                id: userData.id,
+                name: userData.name,
+                username: userData.username,
+                role: userData.role,
+                avatarId: userData.avatarId || '1',
+            };
+            setUser(apiUser);
+        } else {
+            throw new Error('Invalid session');
+        }
+    } catch (error: any) {
+        console.error('Session verification failed', error);
+        if (error.response?.status === 401) {
+            localStorage.removeItem('token');
+            setAuthToken(null);
+            setUser(null);
+            if (!isPublicPage && !isAuthPage) {
+                router.replace('/login');
+            }
+        }
+    } finally {
+        setLoading(false);
+    }
+  }, [pathname, router]);
+
+  useEffect(() => {
+    verifyAuth();
+  }, [verifyAuth]);
+
+  useEffect(() => {
+    if (user && pathname === '/login') {
+      const redirectPath = roleRedirects[user.role] || '/dashboard';
+      router.replace(redirectPath);
+    }
+  }, [user, pathname, router]);
+  
+  const login = useCallback(async (role: string, username: string, password: string): Promise<{ success: boolean; error?: string }> => {
+    setLoading(true);
+    try {
+      const response = await api.post('/auth/login', { username, role, password });
+      const { user: userData, token } = response.data;
+
+      localStorage.setItem('token', token);
+      setAuthToken(token);
+      
+      const apiUser: User = {
+        id: userData.id,
+        name: userData.name,
+        username: userData.username,
+        role: userData.role,
+        avatarId: userData.avatarId || '1',
+      };
+      justLoggedInRef.current = true;
+      setUser(apiUser);
+      setLoading(false);
+      
+      return { success: true };
+    } catch (error: any) {
+      setLoading(false);
+      const errorMessage = error.response?.data?.message || 'Login failed. Please after reloading the page and try again.';
+      return { success: false, error: errorMessage };
+    }
+  }, []);
+  
+  const logout = useCallback(() => {
+    setUser(null);
+    localStorage.removeItem('token');
+    setAuthToken(null);
+    router.push('/login');
+  }, [router]);
+  
+  const addSongSuggestion = useCallback(async (suggestion: Omit<SongSuggestion, 'id' | 'submittedAt' | 'status'>) : Promise<{ success: boolean }> => {
+     try {
+      await api.post('/public/song-suggestion', suggestion);
+      return { success: true };
+    } catch (error: any) {
+      console.error('Failed to submit song suggestion:', error);
+      toast({
+        variant: 'destructive',
+        title: 'Submission Failed',
+        description: error.response?.data?.message || 'Could not submit your song suggestion. Please try again later.',
+      });
+      return { success: false };
+    }
+  }, [toast]);
+
+  const value = useMemo(() => ({
+    user,
+    loading,
+    login,
+    logout,
+    addSongSuggestion
+  }), [user, loading, login, logout, addSongSuggestion]);
+
+  return (
+    <AuthContext.Provider value={value}>
+      {children}
+    </AuthContext.Provider>
+  );
+}
+
+export function useAuth() {
+  const context = useContext(AuthContext);
+  if (context === undefined) {
+    throw new Error('useAuth must be used within an AuthProvider');
+  }
+  return context;
+}

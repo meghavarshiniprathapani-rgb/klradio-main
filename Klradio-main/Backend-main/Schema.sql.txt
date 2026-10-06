@@ -1,0 +1,106 @@
+create table if not exists users (
+  id serial primary key,
+  username varchar(100) unique not null,
+  password varchar(255) not null,
+  role varchar(20) not null check (
+    role in ('station_head', 'creative', 'rj', 'technical')
+  ),
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp
+);
+
+create table if not exists scripts (
+  id serial primary key,
+  title varchar(255) not null,
+  content text not null,
+  is_live boolean default false,
+  created_by integer not null,
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp,
+  constraint fk_scripts_user
+    foreign key (created_by)
+    references users(id)
+    on delete cascade
+);
+
+create table if not exists announcements (
+  id serial primary key,
+  title varchar(255) not null,
+  content text not null,
+  created_by integer not null,
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp,
+  constraint fk_announcements_user
+    foreign key (created_by)
+    references users(id)
+    on delete cascade
+);
+
+create table if not exists podcast_scripts (
+  id serial primary key,
+  title varchar(255) not null,
+  topic varchar(255) not null,
+  content text not null,
+  assigned_to integer,
+  status varchar(20) default 'pending' check (
+    status in ('pending', 'completed')
+  ),
+  is_live boolean default false,
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp,
+  constraint fk_podcast_user
+    foreign key (assigned_to)
+    references users(id)
+    on delete set null
+);
+
+create table if not exists news (
+  id serial primary key,
+  title varchar(255) not null,
+  source varchar(255),
+  content text,
+  is_live boolean default false,
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp
+);
+
+create table if not exists song_suggestions (
+  id serial primary key,
+  listener_name varchar(255) not null,
+  song_title varchar(255) not null,
+  movie varchar(255),
+  created_at timestamp default current_timestamp,
+  updated_at timestamp default current_timestamp
+);
+
+create or replace function update_timestamp()
+returns trigger as $$
+begin
+  new.updated_at = current_timestamp;
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger trg_users_updated
+before update on users
+for each row execute function update_timestamp();
+
+create trigger trg_scripts_updated
+before update on scripts
+for each row execute function update_timestamp();
+
+create trigger trg_announcements_updated
+before update on announcements
+for each row execute function update_timestamp();
+
+create trigger trg_podcast_updated
+before update on podcast_scripts
+for each row execute function update_timestamp();
+
+create trigger trg_news_updated
+before update on news
+for each row execute function update_timestamp();
+
+create trigger trg_song_suggestions_updated
+before update on song_suggestions
+for each row execute function update_timestamp();
